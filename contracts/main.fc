@@ -1,0 +1,98 @@
+#include "imports/stdlib.fc";
+
+const const::min_tons_for_storage = 10000000;
+
+
+(int,slice,slice) load_data() inline {
+    var ds = get_data().begin_parse();
+    return (
+        ds~load_uint(32), ;; counter value
+        ds~load_msg_addr(), ;; the most recent sender 
+        ds~load_msg_addr() ;; owner addr
+    );
+}
+
+
+() save_data(int counter_value, slice recent_sender, slice owner_address) impure inline {
+    set_data(
+        begin_cell()
+            .store_uint(counter_value,32)
+            .store_slice(recent_sender)
+            .store_slice(owner_address)
+        .end_cell()
+    );
+}
+
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+
+    slice cs = in_msg_full.begin_parse();
+    int flags = cs~load_uint(4);
+    if( flags & 1) {
+        return ();
+    }
+
+    if (in_msg_body.slice_empty?()){
+        return ();
+    }
+    slice sender_address = cs~load_msg_addr();
+
+    int op = in_msg_body~load_uint(32);
+
+    var (counter_value, recent_sender,owner_address) = load_data();
+
+    if(op == 1){
+        int increment_by = in_msg_body~load_uint(32);
+        save_data(counter_value + increment_by,sender_address,owner_address);
+        return();
+    }
+    if (op == 2){
+        return ();
+    }
+    if (op == 3){
+
+        throw_unless(103, equal_slice_bits(sender_address,owner_address));
+        int withdraw_amount = in_msg_body~load_coins();
+        var [balance,_] = get_balance();
+        throw_unless(104,balance >= withdraw_amount);
+        int return_value = min(withdraw_amount,balance - const::min_tons_for_storage);
+
+        ;; equal_slice_bits()
+        ;; throw_unless() throw_if()
+        ;; get_balance()
+        ;; withdrawal
+        var msg  = begin_cell()
+            .store_uint(0x18,6)
+            .store_slice(sender_address)
+            .store_coins(return_value)
+            .store_uint(0,1 + 4 + 4 + 64 + 32 + 1 + 1);
+
+
+        send_raw_message(msg.end_cell(),1);
+
+        return ();
+    } 
+    if(op == 4){
+        var burn_msg = begin_cell()
+            .store_uint(0x18, 6)
+            .store_slice(sender_address)
+            .store_coins(0)
+            .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1);
+
+        send_raw_message(burn_msg.end_cell(),128 + 32);
+    }
+
+    throw(777);
+    
+}
+
+
+(int,slice,slice) get_contract_storage_data() method_id {
+    return load_data();
+}
+
+
+int balance() method_id {
+    var [balance, _] = get_balance();
+    return balance;
+}
